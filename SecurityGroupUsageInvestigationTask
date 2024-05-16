@@ -1,0 +1,68 @@
+import boto3
+import pprint
+
+
+def get_security_group_tags_and_cf_info(security_group_id):
+    # Create EC2 client
+    ec2_client = boto3.client('ec2')
+
+    # Describe the security group to get its tags
+    try:
+        response = ec2_client.describe_security_groups(GroupIds=[security_group_id])
+        if 'SecurityGroups' in response and response['SecurityGroups']:
+            security_group = response['SecurityGroups'][0]
+            # Get security group tags
+            tags = security_group.get('Tags', [])
+            stack_name = ''
+            if tags:
+                print("Tags for Security Group {}: ".format(security_group_id))
+                for tag in tags:
+                    if tag['Key'] == 'aws:cloudformation:stack-name':
+                        stack_name = tag['Value']   # CloudFormation stack name
+                    print("- {}: {}".format(tag['Key'], tag['Value']))
+            else:
+                print("No tags found for Security Group {}.".format(security_group_id))
+
+            # Check if the security group is part of a CloudFormation stack
+
+            if stack_name:
+                print("Deployed by CloudFormation Stack:")
+                print("- Stack Name: {}".format(stack_name))
+
+                # Describe the stack to get more details
+                cloudformation_client = boto3.client('cloudformation')
+                stack_response = cloudformation_client.describe_stacks(StackName=stack_name)
+                if 'Stacks' in stack_response and stack_response['Stacks']:
+                    stack_details = stack_response['Stacks'][0]
+                    print("- Stack ID: {}".format(stack_details['StackId']))
+                    print("- Stack Status: {}".format(stack_details['StackStatus']))
+                    print("- Creation Time: {}".format(stack_details['CreationTime']))
+
+                    resource_response = cloudformation_client.describe_stack_resources(StackName=stack_name)
+                    print("\nResources Deployed by CloudFormation Template are :- ")
+                    for resource in resource_response["StackResources"]:
+                        print("Resource LogicalResourceId: {}".format(resource["LogicalResourceId"]))
+                        print("Resource PhysicalResourceId: {}".format(resource["PhysicalResourceId"]))
+                        print("Resource ResourceType: {}".format(resource["ResourceType"]))
+                        print("Resource ResourceStatus: {}".format(resource["ResourceStatus"]))
+                        print()
+                else:
+                    print("Stack details not found.")
+            else:
+                print("Security Group was not deployed by CloudFormation.")
+        else:
+            print("Security Group {} not found.".format(security_group_id))
+    except Exception as e:
+        print("Error: {}".format(e))
+
+
+# def describe_cft_stacks():
+#     cft_client = boto3.client('cloudformation')
+#     response = cft_client.describe_stack_resources(StackName='athenaforflowlogs')
+#     pprint.pprint(response)
+
+
+# Example usage: Provide the security group ID as input
+security_group_id = 'sg-00233d8bee043b5e4'
+get_security_group_tags_and_cf_info(security_group_id)
+# describe_cft_stacks()
