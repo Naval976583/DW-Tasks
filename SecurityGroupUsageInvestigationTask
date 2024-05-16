@@ -1,57 +1,90 @@
 import boto3
 import pprint
+import json
+from datetime import datetime
 
 
-def get_security_group_tags_and_cf_info(security_group_id):
+def serialize_datetime(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()  # Serialize datetime as ISO 8601 string
+    else:
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
+def get_security_group_tags_and_cf_info(security_group_ids):
     # Create EC2 client
     ec2_client = boto3.client('ec2')
 
     # Describe the security group to get its tags
     try:
-        response = ec2_client.describe_security_groups(GroupIds=[security_group_id])
-        if 'SecurityGroups' in response and response['SecurityGroups']:
-            security_group = response['SecurityGroups'][0]
-            # Get security group tags
-            tags = security_group.get('Tags', [])
-            stack_name = ''
-            if tags:
-                print("Tags for Security Group {}: ".format(security_group_id))
-                for tag in tags:
-                    if tag['Key'] == 'aws:cloudformation:stack-name':
-                        stack_name = tag['Value']   # CloudFormation stack name
-                    print("- {}: {}".format(tag['Key'], tag['Value']))
-            else:
-                print("No tags found for Security Group {}.".format(security_group_id))
-
-            # Check if the security group is part of a CloudFormation stack
-
-            if stack_name:
-                print("Deployed by CloudFormation Stack:")
-                print("- Stack Name: {}".format(stack_name))
-
-                # Describe the stack to get more details
-                cloudformation_client = boto3.client('cloudformation')
-                stack_response = cloudformation_client.describe_stacks(StackName=stack_name)
-                if 'Stacks' in stack_response and stack_response['Stacks']:
-                    stack_details = stack_response['Stacks'][0]
-                    print("- Stack ID: {}".format(stack_details['StackId']))
-                    print("- Stack Status: {}".format(stack_details['StackStatus']))
-                    print("- Creation Time: {}".format(stack_details['CreationTime']))
-
-                    resource_response = cloudformation_client.describe_stack_resources(StackName=stack_name)
-                    print("\nResources Deployed by CloudFormation Template are :- ")
-                    for resource in resource_response["StackResources"]:
-                        print("Resource LogicalResourceId: {}".format(resource["LogicalResourceId"]))
-                        print("Resource PhysicalResourceId: {}".format(resource["PhysicalResourceId"]))
-                        print("Resource ResourceType: {}".format(resource["ResourceType"]))
-                        print("Resource ResourceStatus: {}".format(resource["ResourceStatus"]))
-                        print()
+        result = dict()
+        for security_group_id in security_group_ids:
+            result[security_group_id] = dict()
+            response = ec2_client.describe_security_groups(GroupIds=[security_group_id])
+            if 'SecurityGroups' in response and response['SecurityGroups']:
+                security_group = response['SecurityGroups'][0]
+                # Get security group tags
+                tags = security_group.get('Tags', [])
+                stack_name = ''
+                if tags:
+                    print("Tags for Security Group {}: ".format(security_group_id))
+                    for tag in tags:
+                        if tag['Key'] == 'aws:cloudformation:stack-name':
+                            stack_name = tag['Value']  # CloudFormation stack name
+                        print("- {}: {}".format(tag['Key'], tag['Value']))
+                    result[security_group_id]["Tags"] = tags
                 else:
-                    print("Stack details not found.")
+                    result[security_group_id]["Tags"] = "No tags found for Security Group"
+                    print("No tags found for Security Group {}.".format(security_group_id))
+
+                # Check if the security group is part of a CloudFormation stack
+
+                if stack_name:
+                    print("Deployed by CloudFormation Stack:")
+                    print("- Stack Name: {}".format(stack_name))
+
+                    # Describe the stack to get more details
+                    cloudformation_client = boto3.client('cloudformation')
+                    stack_response = cloudformation_client.describe_stacks(StackName=stack_name)
+                    cloudformation_stack_info = {}
+                    if 'Stacks' in stack_response and stack_response['Stacks']:
+                        stack_details = stack_response['Stacks'][0]
+                        print("- Stack ID: {}".format(stack_details['StackId']))
+                        print("- Stack Status: {}".format(stack_details['StackStatus']))
+                        print("- Creation Time: {}".format(stack_details['CreationTime']))
+                        cloudformation_stack_info["StackID"] = stack_details['StackId']
+                        cloudformation_stack_info["StackStatus"] = stack_details['StackStatus']
+                        cloudformation_stack_info["CreationTime"] = stack_details['CreationTime']
+
+                        cloudformation_stack_info["Resources"] = list()
+                        resource_response = cloudformation_client.describe_stack_resources(StackName='athenaforflowlogs')
+                        print("\nResources Deployed by CloudFormation Template are :- ")
+                        for resource in resource_response["StackResources"]:
+                            resource_info = dict()
+                            resource_info["LogicalResourceId"] = resource["LogicalResourceId"]
+                            resource_info["PhysicalResourceId"] = resource["PhysicalResourceId"]
+                            resource_info["ResourceType"] = resource["ResourceType"]
+                            resource_info["ResourceStatus"] = resource["ResourceStatus"]
+
+                            print("Resource LogicalResourceId: {}".format(resource["LogicalResourceId"]))
+                            print("Resource PhysicalResourceId: {}".format(resource["PhysicalResourceId"]))
+                            print("Resource ResourceType: {}".format(resource["ResourceType"]))
+                            print("Resource ResourceStatus: {}".format(resource["ResourceStatus"]))
+                            print()
+                            cloudformation_stack_info["Resources"].append(resource_info)
+                        result[security_group_id]["CloudFormationStackInfo"] = cloudformation_stack_info
+                    else:
+                        result[security_group_id]["CloudFormationStackInfo"] = "Stack details not found."
+                        print("Stack details not found.")
+                else:
+                    result[security_group_id]["CloudFormationStackInfo"] = "Security Group was not deployed by " \
+                                                                           "CloudFormation."
+                    print("Security Group was not deployed by CloudFormation.")
             else:
-                print("Security Group was not deployed by CloudFormation.")
-        else:
-            print("Security Group {} not found.".format(security_group_id))
+                result[security_group_id] = "Security Group not found."
+                print("Security Group {} not found.".format(security_group_id))
+        with open("result.json", "w") as file_object:
+            json.dump(result, file_object, default=serialize_datetime, indent=4)
     except Exception as e:
         print("Error: {}".format(e))
 
@@ -63,6 +96,6 @@ def get_security_group_tags_and_cf_info(security_group_id):
 
 
 # Example usage: Provide the security group ID as input
-security_group_id = 'sg-00233d8bee043b5e4'
-get_security_group_tags_and_cf_info(security_group_id)
+security_group_ids = ['sg-00233d8bee043b5e4', 'sg-0e1c693aaaf8ee854']
+get_security_group_tags_and_cf_info(security_group_ids)
 # describe_cft_stacks()
